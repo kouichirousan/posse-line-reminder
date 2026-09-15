@@ -4,6 +4,31 @@ import { verifyLineSignature, replyTextMessage, leaveGroup } from "@/lib/line";
 import { isAllowedUser, isAllowedGroup } from "@/lib/allowlist";
 import { parseCommand } from "@/lib/parseCommand";
 import { addCelebrant, removeCelebrant, setSpeechSpeakers, upsertBirthday } from "@/lib/sheets";
+import { resolveName } from "@/lib/nameResolver";
+
+/**
+ * 名簿と照合し、完全一致ならその名前を返す。表記ゆれ候補が見つかった場合は
+ * 確認を促す返信を送って null を返す（呼び出し側は処理を中断する）。
+ * 該当者がいなければ「見つかりません」と返信して null を返す。
+ */
+async function resolveOrReply(replyToken: string, inputName: string): Promise<string | null> {
+  const resolution = await resolveName(inputName);
+  if (resolution.status === "exact") return resolution.name;
+
+  if (resolution.status === "suggestion") {
+    await replyTextMessage(
+      replyToken,
+      `「${resolution.input}」さんは名簿に見つかりませんでした。もしかして「${resolution.suggestion}」さんですか？正しければ、正確な名前でもう一度送ってください。`
+    );
+    return null;
+  }
+
+  await replyTextMessage(
+    replyToken,
+    `「${resolution.input}」さんが名簿に見つかりませんでした。名前を確認してもう一度送ってください。`
+  );
+  return null;
+}
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -57,11 +82,24 @@ export async function POST(req: NextRequest) {
         `${command.name}さんの誕生日（${command.date}）を${verb}！`
       );
     } else if (command.action === "set_speech_speaker") {
-      const result = await setSpeechSpeakers(command.date, command.speakers);
+      // 担当者名を名簿と照合（表記ゆれがあれば確認を促して中断）
+      const resolvedSpeakers: string[] = [];
+      let aborted = false;
+      for (const speaker of command.speakers) {
+        const resolved = await resolveOrReply(replyToken, speaker);
+        if (!resolved) {
+          aborted = true;
+          break;
+        }
+        resolvedSpeakers.push(resolved);
+      }
+      if (aborted) continue;
+
+      const result = await setSpeechSpeakers(command.date, resolvedSpeakers);
       if (result === "updated") {
         await replyTextMessage(
           replyToken,
-          `${command.date}の100秒スピーチ担当を${command.speakers.join("・")}さんに変更しました！`
+          `${command.date}の100秒スピーチ担当を${resolvedSpeakers.join("・")}さんに変更しました！`
         );
       } else {
         await replyTextMessage(
@@ -70,39 +108,37 @@ export async function POST(req: NextRequest) {
         );
       }
     } else if (command.action === "add_celebrant") {
-      const result = await addCelebrant(command.personName, command.celebrantName);
+      const personName = await resolveOrReply(replyToken, command.personName);
+      if (!personName) continue;
+      const celebrantName = await resolveOrReply(replyToken, command.celebrantName);
+      if (!celebrantName) continue;
+
+      const result = await addCelebrant(personName, celebrantName);
       if (result === "added") {
-        await replyTextMessage(
-          replyToken,
-          `${command.personName}さんの祝福者に${command.celebrantName}さんを追加しました！`
-        );
+        await replyTextMessage(replyToken, `${personName}さんの祝福者に${celebrantName}さんを追加しました！`);
       } else if (result === "already_exists") {
-        await replyTextMessage(
-          replyToken,
-          `${command.celebrantName}さんは既に${command.personName}さんの祝福者に入っています。`
-        );
+        await replyTextMessage(replyToken, `${celebrantName}さんは既に${personName}さんの祝福者に入っています。`);
       } else {
         await replyTextMessage(
           replyToken,
-          `${command.personName}さんが誕生日リストに見つかりませんでした。名前を確認してもう一度送ってください。`
+          `${personName}さんが誕生日リストに見つかりませんでした（名簿には存在しますが、この回の誕生日リストには載っていないようです）。`
         );
       }
     } else if (command.action === "remove_celebrant") {
-      const result = await removeCelebrant(command.personName, command.celebrantName);
+      const personName = await resolveOrReply(replyToken, command.personName);
+      if (!personName) continue;
+      const celebrantName = await resolveOrReply(replyToken, command.celebrantName);
+      if (!celebrantName) continue;
+
+      const result = await removeCelebrant(personName, celebrantName);
       if (result === "removed") {
-        await replyTextMessage(
-          replyToken,
-          `${command.personName}さんの祝福者から${command.celebrantName}さんを削除しました。`
-        );
+        await replyTextMessage(replyToken, `${personName}さんの祝福者から${celebrantName}さんを削除しました。`);
       } else if (result === "celebrant_not_found") {
-        await replyTextMessage(
-          replyToken,
-          `${command.celebrantName}さんは${command.personName}さんの祝福者に入っていませんでした。`
-        );
+        await replyTextMessage(replyToken, `${celebrantName}さんは${personName}さんの祝福者に入っていませんでした。`);
       } else {
         await replyTextMessage(
           replyToken,
-          `${command.personName}さんが誕生日リストに見つかりませんでした。名前を確認してもう一度送ってください。`
+          `${personName}さんが誕生日リストに見つかりませんでした（名簿には存在しますが、この回の誕生日リストには載っていないようです）。`
         );
       }
     } else {
