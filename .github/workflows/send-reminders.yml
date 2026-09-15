@@ -1,0 +1,17 @@
+name: Send LINE reminders
+
+on:
+  schedule:
+    # 毎日 8:00 JST (23:00 UTC 前日) に実行。送るべきリマインドがあるかはAPI側が判定する
+    - cron: "0 23 * * *"
+  workflow_dispatch: {} # 手動実行用（動作確認に便利）
+
+jobs:
+  send-reminders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call reminder endpoint
+        run: |
+          curl -sS -X POST "${{ secrets.VERCEL_APP_URL }}/api/send-reminders" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -w "\nHTTP status: %{http_code}\n"
