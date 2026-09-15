@@ -13,15 +13,38 @@ export function verifyLineSignature(body: string, signature: string | null): boo
 }
 
 export async function pushTextMessage(to: string, text: string) {
-  await lineClient.pushMessage({
-    to,
-    messages: [{ type: "text", text }],
-  });
+  try {
+    const res = await lineClient.pushMessage({
+      to,
+      messages: [{ type: "text", text }],
+    });
+    console.log("LINE push success:", JSON.stringify({ to, text, res }));
+  } catch (err) {
+    console.error("LINE push failed:", JSON.stringify({ to, text, error: String(err) }));
+    throw err;
+  }
 }
 
 export async function replyTextMessage(replyToken: string, text: string) {
-  await lineClient.replyMessage({
-    replyToken,
-    messages: [{ type: "text", text }],
-  });
+  try {
+    const res = await lineClient.replyMessage({
+      replyToken,
+      messages: [{ type: "text", text }],
+    });
+    console.log("LINE reply success:", JSON.stringify({ text, res }));
+  } catch (err) {
+    console.error("LINE reply failed:", JSON.stringify({ text, error: String(err) }));
+    throw err;
+  }
+}
+
+/** 許可していないグループにbotが追加された場合、自動的に退出する（機能6） */
+export async function leaveGroup(groupId: string) {
+  try {
+    const res = await lineClient.leaveGroup(groupId);
+    console.log("LINE leaveGroup success:", JSON.stringify({ groupId, res }));
+  } catch (err) {
+    console.error("LINE leaveGroup failed:", JSON.stringify({ groupId, error: String(err) }));
+    throw err;
+  }
 }

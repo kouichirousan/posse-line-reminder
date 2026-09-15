@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { webhook } from "@line/bot-sdk";
-import { verifyLineSignature, replyTextMessage } from "@/lib/line";
-import { isAllowedUser } from "@/lib/allowlist";
+import { verifyLineSignature, replyTextMessage, leaveGroup } from "@/lib/line";
+import { isAllowedUser, isAllowedGroup } from "@/lib/allowlist";
 import { parseCommand } from "@/lib/parseCommand";
 import { setSpeechSpeakers, upsertBirthday } from "@/lib/sheets";
 
@@ -18,6 +18,18 @@ export async function POST(req: NextRequest) {
   for (const event of body.events) {
     // セットアップ確認用：グループ/ユーザーのIDをログに出す（Vercelのログで確認できる）
     console.log("LINE event:", JSON.stringify(event));
+
+    // 機能6：許可していないグループに追加された場合は自動的に退出する
+    if (event.type === "join" && event.source?.type === "group") {
+      const groupId = event.source.groupId;
+      if (!isAllowedGroup(groupId)) {
+        console.log("Unauthorized group, leaving:", JSON.stringify({ groupId }));
+        if (groupId) await leaveGroup(groupId);
+      } else {
+        console.log("Authorized group join:", JSON.stringify({ groupId }));
+      }
+      continue;
+    }
 
     if (event.type !== "message" || event.message.type !== "text") continue;
 

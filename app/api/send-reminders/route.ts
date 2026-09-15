@@ -24,19 +24,28 @@ export async function POST(req: NextRequest) {
   const speechReminders = await getSpeechRemindersForToday(today);
   const birthdayReminders = await getBirthdayRemindersForToday(today);
 
-  const sentMessages: string[] = [];
+  const messages = [
+    ...speechReminders.map(buildSpeechMessage),
+    ...birthdayReminders.map(buildBirthdayMessage),
+  ];
 
-  for (const reminder of speechReminders) {
-    const message = buildSpeechMessage(reminder);
-    await pushTextMessage(targetId, message);
-    sentMessages.push(message);
-  }
+  // 1件の送信失敗が他のリマインドを巻き込まないよう、それぞれ独立して結果を記録する
+  const results = await Promise.allSettled(
+    messages.map((message) => pushTextMessage(targetId, message))
+  );
 
-  for (const reminder of birthdayReminders) {
-    const message = buildBirthdayMessage(reminder);
-    await pushTextMessage(targetId, message);
-    sentMessages.push(message);
-  }
+  const succeeded = results.filter((r) => r.status === "fulfilled").length;
+  const failed = results.filter((r) => r.status === "rejected").length;
 
-  return NextResponse.json({ ok: true, sent: sentMessages.length, messages: sentMessages });
+  const summary = {
+    ok: failed === 0,
+    date: today.toISOString().slice(0, 10),
+    total: messages.length,
+    succeeded,
+    failed,
+    messages,
+  };
+  console.log("send-reminders summary:", JSON.stringify(summary));
+
+  return NextResponse.json(summary, { status: failed > 0 ? 207 : 200 });
 }

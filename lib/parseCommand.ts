@@ -28,8 +28,13 @@ export async function parseCommand(message: string): Promise<ParsedCommand> {
   const textBlock = response.content.find((block) => block.type === "text");
   if (!textBlock || textBlock.type !== "text") return { action: "unknown" };
 
+  // AIの出力が ```json ... ``` のようなMarkdownコードフェンスで囲まれることがあるため、
+  // 素のJSON部分（最初の { から最後の } まで）だけを取り出してからパースする
+  const match = textBlock.text.match(/\{[\s\S]*\}/);
+  if (!match) return { action: "unknown" };
+
   try {
-    const parsed = JSON.parse(textBlock.text);
+    const parsed = JSON.parse(match[0]);
     if (parsed.action === "set_birthday" && parsed.name && parsed.date) {
       return { action: "set_birthday", name: parsed.name, date: parsed.date };
     }
