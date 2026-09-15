@@ -2,8 +2,9 @@ import { google } from "googleapis";
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID ?? "";
 // シート名はGoogleスプレッドシートのタブ名と完全一致させる（実際のタブ名と違ったら.envで調整する）
+// 100スピシートのタブ名は末尾に半角スペースが付いているのが実物の正式名称（2026-09-16確認）
 const SHEET_NAME_100SPEECH =
-  process.env.SHEET_NAME_100SPEECH ?? "6期生＆7期生100スピ・birthdayローテ";
+  process.env.SHEET_NAME_100SPEECH ?? "6期生＆7期生100スピ・birthdayローテ ";
 const SHEET_NAME_BIRTHDAY = process.env.SHEET_NAME_BIRTHDAY ?? "6期&7期birthday";
 
 function getAuth() {
@@ -52,40 +53,45 @@ export async function getSpeechRoster(): Promise<SpeechRow[]> {
     }));
 }
 
-/** 誕生日名簿を読む（A3以降、B=お祝い日, C=名前） */
+/**
+ * 誕生日名簿を読む。
+ * 実物のシート構造（2026-09-16確認）：B列=一覧番号, C列=お祝い日, D列=空, E列=名前
+ * （ヘッダー行の表示位置とは1列ズレているが、実データはこの並び）
+ */
 export async function getBirthdayRoster(): Promise<BirthdayRow[]> {
   const sheets = await getSheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `'${SHEET_NAME_BIRTHDAY}'!A3:D200`,
+    range: `'${SHEET_NAME_BIRTHDAY}'!B3:E200`,
   });
   const rows = res.data.values ?? [];
   return rows
-    .filter((row) => row[1] && row[2]) // 日付・名前がある行のみ
+    .filter((row) => row[1] && row[3]) // 日付・名前がある行のみ
     .map((row) => ({
       date: row[1] ?? "",
-      name: row[2] ?? "",
+      name: row[3] ?? "",
     }));
 }
 
 /**
  * 誕生日名簿に対して、既存の名前があれば日付を更新、なければ新規行を追加する。
  * 1:1チャットからの設定変更（機能3）の最初のユースケースとして実装。
+ * 列構成はgetBirthdayRosterと同じ（B=一覧番号, C=お祝い日, D=空, E=名前）
  */
 export async function upsertBirthday(name: string, date: string): Promise<"updated" | "added"> {
   const sheets = await getSheetsClient();
   const readRes = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `'${SHEET_NAME_BIRTHDAY}'!A3:D200`,
+    range: `'${SHEET_NAME_BIRTHDAY}'!B3:E200`,
   });
   const rows = readRes.data.values ?? [];
-  const existingIndex = rows.findIndex((row) => row[2] === name);
+  const existingIndex = rows.findIndex((row) => row[3] === name);
 
   if (existingIndex !== -1) {
-    const rowNumber = existingIndex + 3; // A3始まりなのでオフセット+3
+    const rowNumber = existingIndex + 3; // B3始まりなのでオフセット+3
     await sheets.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: `'${SHEET_NAME_BIRTHDAY}'!B${rowNumber}`,
+      range: `'${SHEET_NAME_BIRTHDAY}'!C${rowNumber}`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values: [[date]] },
     });
@@ -94,10 +100,10 @@ export async function upsertBirthday(name: string, date: string): Promise<"updat
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: `'${SHEET_NAME_BIRTHDAY}'!A3:D200`,
+    range: `'${SHEET_NAME_BIRTHDAY}'!B3:E200`,
     valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
-    requestBody: { values: [["", date, name, ""]] },
+    requestBody: { values: [["", date, "", name]] },
   });
   return "added";
 }
