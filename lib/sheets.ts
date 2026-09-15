@@ -107,3 +107,32 @@ export async function upsertBirthday(name: string, date: string): Promise<"updat
   });
   return "added";
 }
+
+/**
+ * 100秒スピーチの担当者を変更する。
+ * 対象の日付（M/D形式、ローテ表のB列と一致）の行を探し、C・D列（担当者名）を上書きする。
+ * 該当する日付の回がなければ "not_found" を返す（新規追加はしない。ローテ自体の追加は範囲外）。
+ */
+export async function setSpeechSpeakers(
+  date: string,
+  speakers: string[]
+): Promise<"updated" | "not_found"> {
+  const sheets = await getSheetsClient();
+  const readRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_100SPEECH}'!A3:D200`,
+  });
+  const rows = readRes.data.values ?? [];
+  const existingIndex = rows.findIndex((row) => row[1] === date);
+
+  if (existingIndex === -1) return "not_found";
+
+  const rowNumber = existingIndex + 3; // A3始まりなのでオフセット+3
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_100SPEECH}'!C${rowNumber}:D${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[speakers[0] ?? "", speakers[1] ?? ""]] },
+  });
+  return "updated";
+}

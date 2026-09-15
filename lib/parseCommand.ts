@@ -4,20 +4,23 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export type ParsedCommand =
   | { action: "set_birthday"; name: string; date: string } // dateはYYYY/MM/DD
+  | { action: "set_speech_speaker"; date: string; speakers: string[] } // dateはM/D（年なし）
   | { action: "unknown" };
 
 /**
- * 1:1チャットのメッセージを解釈する。現状は誕生日の登録・変更のみ対応（MVP第一弾）。
- * 今後、100秒スピーチの担当変更などにも拡張する。
+ * 1:1チャットのメッセージを解釈する。
+ * 対応：①誕生日の登録・変更 ②100秒スピーチ担当者の変更
  */
 export async function parseCommand(message: string): Promise<ParsedCommand> {
   const response = await anthropic.messages.create({
     model: "claude-sonnet-5",
     max_tokens: 300,
     system:
-      "あなたはPOSSEのリマインドBotのコマンド解釈役です。ユーザーのメッセージから「誕生日の登録・変更」の意図を読み取り、JSONだけを出力してください。" +
-      '該当する場合: {"action":"set_birthday","name":"名前","date":"YYYY/MM/DD"}。' +
-      '該当しない・読み取れない場合: {"action":"unknown"}。' +
+      "あなたはPOSSEのリマインドBotのコマンド解釈役です。ユーザーのメッセージの意図を読み取り、JSONだけを出力してください。" +
+      "対応する意図は2種類：" +
+      '① 誕生日の登録・変更: {"action":"set_birthday","name":"名前","date":"YYYY/MM/DD"}' +
+      '② 100秒スピーチ担当者の変更: {"action":"set_speech_speaker","date":"M/D","speakers":["名前1"] または ["名前1","名前2"]}（日付はローテ表に記載の月日。年は含めない）' +
+      'どちらにも該当しない・読み取れない場合: {"action":"unknown"}。' +
       "説明文は一切つけず、JSONのみを出力してください。年が書かれていない場合は2026年として扱ってください。",
     messages: [{ role: "user", content: message }],
   });
@@ -29,6 +32,14 @@ export async function parseCommand(message: string): Promise<ParsedCommand> {
     const parsed = JSON.parse(textBlock.text);
     if (parsed.action === "set_birthday" && parsed.name && parsed.date) {
       return { action: "set_birthday", name: parsed.name, date: parsed.date };
+    }
+    if (
+      parsed.action === "set_speech_speaker" &&
+      parsed.date &&
+      Array.isArray(parsed.speakers) &&
+      parsed.speakers.length > 0
+    ) {
+      return { action: "set_speech_speaker", date: parsed.date, speakers: parsed.speakers };
     }
     return { action: "unknown" };
   } catch {

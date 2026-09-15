@@ -3,7 +3,7 @@ import type { webhook } from "@line/bot-sdk";
 import { verifyLineSignature, replyTextMessage } from "@/lib/line";
 import { isAllowedUser } from "@/lib/allowlist";
 import { parseCommand } from "@/lib/parseCommand";
-import { upsertBirthday } from "@/lib/sheets";
+import { setSpeechSpeakers, upsertBirthday } from "@/lib/sheets";
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -44,10 +44,23 @@ export async function POST(req: NextRequest) {
         replyToken,
         `${command.name}さんの誕生日（${command.date}）を${verb}！`
       );
+    } else if (command.action === "set_speech_speaker") {
+      const result = await setSpeechSpeakers(command.date, command.speakers);
+      if (result === "updated") {
+        await replyTextMessage(
+          replyToken,
+          `${command.date}の100秒スピーチ担当を${command.speakers.join("・")}さんに変更しました！`
+        );
+      } else {
+        await replyTextMessage(
+          replyToken,
+          `${command.date}の回がローテ表に見つかりませんでした。日付を確認してもう一度送ってください。`
+        );
+      }
     } else {
       await replyTextMessage(
         replyToken,
-        "うまく読み取れませんでした。「〇〇さんの誕生日は2026/5/1です」のように送ってください。"
+        "うまく読み取れませんでした。「〇〇さんの誕生日は2026/5/1です」「5/25の100スピ担当を〇〇に変更してください」のように送ってください。"
       );
     }
   }
