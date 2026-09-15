@@ -1,4 +1,4 @@
-import { getBirthdayRoster, getSpeechRoster } from "./sheets";
+import { getBirthdayRoster, getSpeechRoster, getUpcomingCelebrantGaps, type CelebrantGap } from "./sheets";
 
 /** サーバーのタイムゾーンに関わらず、日本時間での「今日」を返す */
 export function getTodayJST(): Date {
@@ -97,4 +97,21 @@ export function buildSpeechMessage(reminder: SpeechReminder): string {
 
 export function buildBirthdayMessage(reminder: BirthdayReminder): string {
   return `【お誕生日】${formatMD(reminder.targetDate)}は ${reminder.name} さんの誕生日です🎉 お祝いの準備をお願いします！`;
+}
+
+/**
+ * 祝福者が未定の人を、月曜日だけチェックしてカルチャー局（ALLOWED_LINE_USER_IDS）にリマインドする（機能5拡張）。
+ * 毎日送ると同じ内容が繰り返されてうるさいため、週1回（月曜）だけに絞っている。
+ */
+export async function getCelebrantGapReminderForToday(
+  today: Date,
+  daysAhead = 30
+): Promise<CelebrantGap[]> {
+  if (today.getDay() !== 1) return []; // 月曜のみ
+  return getUpcomingCelebrantGaps(today, daysAhead);
+}
+
+export function buildCelebrantGapMessage(gaps: CelebrantGap[]): string {
+  const lines = gaps.map((g) => `・${g.date} ${g.name}さん`).join("\n");
+  return `【祝福者未定のお知らせ】今後30日以内に誕生日が来るのに、祝福者がまだ決まっていない人がいます。\n${lines}\n1:1チャットで「〇〇さんの祝福者に△△を追加して」と送ると登録できます。`;
 }

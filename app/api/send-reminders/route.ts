@@ -2,11 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { pushTextMessage } from "@/lib/line";
 import {
   buildBirthdayMessage,
+  buildCelebrantGapMessage,
   buildSpeechMessage,
   getBirthdayRemindersForToday,
+  getCelebrantGapReminderForToday,
   getSpeechRemindersForToday,
   getTodayJST,
 } from "@/lib/reminders";
+
+function getAllowedUserIds(): string[] {
+  return (process.env.ALLOWED_LINE_USER_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
 
 /** GitHub Actionsから定時に叩かれるエンドポイント。共有シークレットで認証する。 */
 export async function POST(req: NextRequest) {
@@ -24,26 +33,38 @@ export async function POST(req: NextRequest) {
   const speechReminders = await getSpeechRemindersForToday(today);
   const birthdayReminders = await getBirthdayRemindersForToday(today);
 
-  const messages = [
+  const groupMessages = [
     ...speechReminders.map(buildSpeechMessage),
     ...birthdayReminders.map(buildBirthdayMessage),
   ];
 
   // 1件の送信失敗が他のリマインドを巻き込まないよう、それぞれ独立して結果を記録する
-  const results = await Promise.allSettled(
-    messages.map((message) => pushTextMessage(targetId, message))
+  const groupResults = await Promise.allSettled(
+    groupMessages.map((message) => pushTextMessage(targetId, message))
   );
 
-  const succeeded = results.filter((r) => r.status === "fulfilled").length;
-  const failed = results.filter((r) => r.status === "rejected").length;
+  // 祝福者未定チェック（月曜のみ）。グループではなくカルチャー局（許可ユーザー）個別に送る
+  const celebrantGaps = await getCelebrantGapReminderForToday(today);
+  let celebrantResults: PromiseSettledResult<void>[] = [];
+  if (celebrantGaps.length > 0) {
+    const message = buildCelebrantGapMessage(celebrantGaps);
+    const allowedUserIds = getAllowedUserIds();
+    celebrantResults = await Promise.allSettled(
+      allowedUserIds.map((userId) => pushTextMessage(userId, message))
+    );
+  }
+
+  const allResults = [...groupResults, ...celebrantResults];
+  const succeeded = allResults.filter((r) => r.status === "fulfilled").length;
+  const failed = allResults.filter((r) => r.status === "rejected").length;
 
   const summary = {
     ok: failed === 0,
     date: today.toISOString().slice(0, 10),
-    total: messages.length,
+    group: { total: groupMessages.length, messages: groupMessages },
+    celebrantGaps: { total: celebrantGaps.length, gaps: celebrantGaps },
     succeeded,
     failed,
-    messages,
   };
   console.log("send-reminders summary:", JSON.stringify(summary));
 

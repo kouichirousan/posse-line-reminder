@@ -3,7 +3,7 @@ import type { webhook } from "@line/bot-sdk";
 import { verifyLineSignature, replyTextMessage, leaveGroup } from "@/lib/line";
 import { isAllowedUser, isAllowedGroup } from "@/lib/allowlist";
 import { parseCommand } from "@/lib/parseCommand";
-import { setSpeechSpeakers, upsertBirthday } from "@/lib/sheets";
+import { addCelebrant, removeCelebrant, setSpeechSpeakers, upsertBirthday } from "@/lib/sheets";
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -69,10 +69,46 @@ export async function POST(req: NextRequest) {
           `${command.date}の回がローテ表に見つかりませんでした。日付を確認してもう一度送ってください。`
         );
       }
+    } else if (command.action === "add_celebrant") {
+      const result = await addCelebrant(command.personName, command.celebrantName);
+      if (result === "added") {
+        await replyTextMessage(
+          replyToken,
+          `${command.personName}さんの祝福者に${command.celebrantName}さんを追加しました！`
+        );
+      } else if (result === "already_exists") {
+        await replyTextMessage(
+          replyToken,
+          `${command.celebrantName}さんは既に${command.personName}さんの祝福者に入っています。`
+        );
+      } else {
+        await replyTextMessage(
+          replyToken,
+          `${command.personName}さんが誕生日リストに見つかりませんでした。名前を確認してもう一度送ってください。`
+        );
+      }
+    } else if (command.action === "remove_celebrant") {
+      const result = await removeCelebrant(command.personName, command.celebrantName);
+      if (result === "removed") {
+        await replyTextMessage(
+          replyToken,
+          `${command.personName}さんの祝福者から${command.celebrantName}さんを削除しました。`
+        );
+      } else if (result === "celebrant_not_found") {
+        await replyTextMessage(
+          replyToken,
+          `${command.celebrantName}さんは${command.personName}さんの祝福者に入っていませんでした。`
+        );
+      } else {
+        await replyTextMessage(
+          replyToken,
+          `${command.personName}さんが誕生日リストに見つかりませんでした。名前を確認してもう一度送ってください。`
+        );
+      }
     } else {
       await replyTextMessage(
         replyToken,
-        "うまく読み取れませんでした。「〇〇さんの誕生日は2026/5/1です」「5/25の100スピ担当を〇〇に変更してください」のように送ってください。"
+        "うまく読み取れませんでした。「〇〇さんの誕生日は2026/5/1です」「5/25の100スピ担当を〇〇に変更してください」「〇〇さんの祝福者に△△を追加して」のように送ってください。"
       );
     }
   }

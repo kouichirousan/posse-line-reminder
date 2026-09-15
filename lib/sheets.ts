@@ -136,3 +136,158 @@ export async function setSpeechSpeakers(
   });
   return "updated";
 }
+
+/**
+ * 祝福者機能（機能5）関連。
+ * 100スピシートのI列＝その週の誕生日リスト（改行区切り、各行「名前M/D」形式）、
+ * J列＝祝福者リストで、I列・J列は同じ行インデックスで対応している（例：I列1行目の人の祝福者はJ列1行目）。
+ * J列の1エントリ内で複数人祝福者がいる場合は「、」区切りで扱う。
+ */
+
+export type CelebrantGap = {
+  name: string; // 誕生日の人
+  date: string; // M/D
+  rowDate: string; // その回（週）のMU日付
+};
+
+function parseBirthdayEntry(entry: string): { name: string; date: string } | null {
+  const match = entry.trim().match(/^(.+?)\s*(\d{1,2}\/\d{1,2})$/);
+  if (!match) return null;
+  return { name: match[1].trim(), date: match[2] };
+}
+
+type CelebrantLocation = {
+  rowNumber: number;
+  lineIndex: number;
+  celebrantLines: string[];
+};
+
+async function findCelebrantLocation(
+  sheets: Awaited<ReturnType<typeof getSheetsClient>>,
+  personName: string
+): Promise<CelebrantLocation | null> {
+  const readRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_100SPEECH}'!A3:J200`,
+  });
+  const rows = readRes.data.values ?? [];
+
+  for (let r = 0; r < rows.length; r++) {
+    const bdRaw = rows[r][8] ?? ""; // I列（0始まりでindex8）
+    if (!bdRaw) continue;
+    const bdEntries = bdRaw.split("\n").map((s: string) => s.trim());
+    const lineIndex = bdEntries.findIndex((e: string) => parseBirthdayEntry(e)?.name === personName);
+    if (lineIndex === -1) continue;
+
+    const celebrantRaw = rows[r][9] ?? ""; // J列（index9）
+    const celebrantLines = celebrantRaw.split("\n");
+    while (celebrantLines.length < bdEntries.length) celebrantLines.push("");
+
+    return { rowNumber: r + 3, lineIndex, celebrantLines };
+  }
+  return null;
+}
+
+async function writeCelebrantLines(
+  sheets: Awaited<ReturnType<typeof getSheetsClient>>,
+  rowNumber: number,
+  celebrantLines: string[]
+) {
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_100SPEECH}'!J${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [[celebrantLines.join("\n")]] },
+  });
+}
+
+/** 指定した誕生日の人の祝福者リストに、名前を追加する */
+export async function addCelebrant(
+  personName: string,
+  celebrantName: string
+): Promise<"added" | "already_exists" | "person_not_found"> {
+  const sheets = await getSheetsClient();
+  const location = await findCelebrantLocation(sheets, personName);
+  if (!location) return "person_not_found";
+
+  const { rowNumber, lineIndex, celebrantLines } = location;
+  const names = celebrantLines[lineIndex]
+    .split("、")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (names.includes(celebrantName)) return "already_exists";
+
+  names.push(celebrantName);
+  celebrantLines[lineIndex] = names.join("、");
+  await writeCelebrantLines(sheets, rowNumber, celebrantLines);
+  return "added";
+}
+
+/** 指定した誕生日の人の祝福者リストから、名前を削除する */
+export async function removeCelebrant(
+  personName: string,
+  celebrantName: string
+): Promise<"removed" | "celebrant_not_found" | "person_not_found"> {
+  const sheets = await getSheetsClient();
+  const location = await findCelebrantLocation(sheets, personName);
+  if (!location) return "person_not_found";
+
+  const { rowNumber, lineIndex, celebrantLines } = location;
+  const names = celebrantLines[lineIndex]
+    .split("、")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!names.includes(celebrantName)) return "celebrant_not_found";
+
+  celebrantLines[lineIndex] = names.filter((n) => n !== celebrantName).join("、");
+  await writeCelebrantLines(sheets, rowNumber, celebrantLines);
+  return "removed";
+}
+
+/**
+ * 今日から指定日数以内に誕生日が来るのに、祝福者がまだ1人も決まっていない人の一覧を返す。
+ * （年をまたぐ場合の簡易対応込み）
+ */
+export async function getUpcomingCelebrantGaps(
+  today: Date,
+  daysAhead: number
+): Promise<CelebrantGap[]> {
+  const sheets = await getSheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_100SPEECH}'!A3:J200`,
+  });
+  const rows = res.data.values ?? [];
+  const endDate = new Date(today);
+  endDate.setDate(endDate.getDate() + daysAhead);
+
+  const gaps: CelebrantGap[] = [];
+
+  for (const row of rows) {
+    const rowDate = row[1] ?? "";
+    const bdRaw = row[8] ?? "";
+    if (!bdRaw) continue;
+    const bdEntries = bdRaw
+      .split("\n")
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+    const celebrantRaw = row[9] ?? "";
+    const celebrantEntries = celebrantRaw.split("\n").map((s: string) => s.trim());
+
+    bdEntries.forEach((entry: string, i: number) => {
+      const parsed = parseBirthdayEntry(entry);
+      if (!parsed) return;
+      const hasCelebrant = !!(celebrantEntries[i] && celebrantEntries[i].length > 0);
+      if (hasCelebrant) return;
+
+      const [m, d] = parsed.date.split("/").map(Number);
+      const bdDate = new Date(today.getFullYear(), m - 1, d);
+      if (bdDate < today) bdDate.setFullYear(bdDate.getFullYear() + 1);
+      if (bdDate >= today && bdDate <= endDate) {
+        gaps.push({ name: parsed.name, date: parsed.date, rowDate });
+      }
+    });
+  }
+
+  return gaps;
+}
