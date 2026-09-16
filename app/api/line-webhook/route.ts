@@ -11,6 +11,31 @@ import {
   upsertBirthday,
 } from "@/lib/sheets";
 import { resolveName } from "@/lib/nameResolver";
+import type { HelpTopic } from "@/lib/parseCommand";
+import type { QuickReplyButton } from "@/lib/line";
+
+const MENU_BUTTONS: QuickReplyButton[] = [
+  { label: "誕生日登録", text: "誕生日登録" },
+  { label: "100スピ変更", text: "100スピ変更" },
+  { label: "祝福者追加", text: "祝福者追加" },
+  { label: "祝福者削除", text: "祝福者削除" },
+  { label: "リマインド作成", text: "リマインド作成" },
+];
+
+const BACK_TO_MENU_BUTTON: QuickReplyButton[] = [{ label: "メニューに戻る", text: "メニュー" }];
+
+const HELP_TEXTS: Record<HelpTopic, string> = {
+  set_birthday: "誕生日登録の言い方はこちらです：\n「〇〇さんの誕生日は2026/5/1です」",
+  set_speech_speaker:
+    "100スピ担当変更の言い方はこちらです：\n「5/25の100スピ担当を〇〇に変更してください」\n（複数人なら「〇〇と△△に」）",
+  add_celebrant: "祝福者追加の言い方はこちらです：\n「〇〇さんの祝福者に△△を追加してください」",
+  remove_celebrant: "祝福者削除の言い方はこちらです：\n「〇〇さんの祝福者から△△を削除してください」",
+  create_reminder:
+    "リマインド作成の言い方はこちらです：\n" +
+    "・1回限り：「2026/12/25に『忘年会があります』とリマインドしてください」\n" +
+    "・毎週：「毎週金曜日に『週報を出してください』とリマインドしてください」\n" +
+    "・送信先グループを指定する場合：「熱中タームグループで2026/12/25に『〜』とリマインドしてください」",
+};
 
 /**
  * 名簿と照合し、完全一致ならその名前を返す。表記ゆれ候補が見つかった場合は
@@ -125,10 +150,19 @@ async function handleUserMessage(userId: string | undefined, replyToken: string,
       replyToken,
       `リマインドを登録しました！${typeLabel}「${command.message}」を送ります。${groupNote}`
     );
+  } else if (command.action === "show_menu") {
+    await replyTextMessage(
+      replyToken,
+      "何をしますか？ボタンから選んでください。",
+      MENU_BUTTONS
+    );
+  } else if (command.action === "show_help") {
+    await replyTextMessage(replyToken, HELP_TEXTS[command.topic], BACK_TO_MENU_BUTTON);
   } else {
     await replyTextMessage(
       replyToken,
-      "うまく読み取れませんでした。「〇〇さんの誕生日は2026/5/1です」「5/25の100スピ担当を〇〇に変更してください」「〇〇さんの祝福者に△△を追加して」「2026/12/25に「忘年会があります」とリマインドしてください」のように送ってください。"
+      "うまく読み取れませんでした。「〇〇さんの誕生日は2026/5/1です」「5/25の100スピ担当を〇〇に変更してください」「〇〇さんの祝福者に△△を追加して」「2026/12/25に「忘年会があります」とリマインドしてください」のように送ってください。困ったら下のボタンからメニューを開けます。",
+      [{ label: "使い方メニュー", text: "メニュー" }]
     );
   }
 }

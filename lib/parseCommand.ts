@@ -3,6 +3,13 @@ import { parseCommandByRules } from "./parseCommandRules";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+export type HelpTopic =
+  | "set_birthday"
+  | "set_speech_speaker"
+  | "add_celebrant"
+  | "remove_celebrant"
+  | "create_reminder";
+
 export type ParsedCommand =
   | { action: "set_birthday"; name: string; date: string } // dateはYYYY/MM/DD
   | { action: "set_speech_speaker"; date: string; speakers: string[] } // dateはM/D（年なし）
@@ -15,6 +22,8 @@ export type ParsedCommand =
       message: string;
       groupLabel?: string;
     }
+  | { action: "show_menu" }
+  | { action: "show_help"; topic: HelpTopic }
   | { action: "unknown" };
 
 /**

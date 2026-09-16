@@ -25,11 +25,26 @@ export async function pushTextMessage(to: string, text: string) {
   }
 }
 
-export async function replyTextMessage(replyToken: string, text: string) {
+export type QuickReplyButton = { label: string; text: string };
+
+export async function replyTextMessage(
+  replyToken: string,
+  text: string,
+  quickReplyButtons?: QuickReplyButton[]
+) {
+  const quickReply = quickReplyButtons?.length
+    ? {
+        items: quickReplyButtons.map((b) => ({
+          type: "action" as const,
+          action: { type: "message" as const, label: b.label, text: b.text },
+        })),
+      }
+    : undefined;
+
   try {
     const res = await lineClient.replyMessage({
       replyToken,
-      messages: [{ type: "text", text }],
+      messages: [{ type: "text", text, quickReply }],
     });
     console.log("LINE reply success:", JSON.stringify({ text, res }));
   } catch (err) {

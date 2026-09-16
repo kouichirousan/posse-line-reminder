@@ -1,4 +1,15 @@
-import type { ParsedCommand } from "./parseCommand";
+import type { HelpTopic, ParsedCommand } from "./parseCommand";
+
+// メニューのボタンをタップすると、この固定文言がユーザーメッセージとして送信される
+// （LINEのQuick Reply=MessageActionの仕様。ボタン→カテゴリ選択→案内表示、という2段階UI）
+const MENU_TRIGGER_TEXTS = ["メニュー", "ヘルプ", "使い方", "使い方メニュー"];
+const HELP_TOPIC_TEXTS: Record<string, HelpTopic> = {
+  誕生日登録: "set_birthday",
+  "100スピ変更": "set_speech_speaker",
+  祝福者追加: "add_celebrant",
+  祝福者削除: "remove_celebrant",
+  リマインド作成: "create_reminder",
+};
 
 /**
  * 決まった言い回し（テンプレート）にマッチするかを正規表現で判定する。
@@ -13,9 +24,20 @@ import type { ParsedCommand } from "./parseCommand";
  * ・単発リマインド：「2026/12/25に『忘年会があります』とリマインドしてください」
  *                  （グループ指定：「熱中タームグループで2026/12/25に『〜』とリマインドしてください」）
  * ・定期リマインド：「毎週金曜日に『週報を出してください』とリマインドしてください」
+ *
+ * 「メニュー」「ヘルプ」等を送るとQuick Replyのボタン式メニューを表示する（show_menu）。
+ * ボタンをタップすると上記5カテゴリ名（誕生日登録／100スピ変更／祝福者追加／祝福者削除／リマインド作成）
+ * が送信され、該当する言い回しの案内を返す（show_help）。
  */
 export function parseCommandByRules(text: string): ParsedCommand | null {
   const t = text.trim();
+
+  if (MENU_TRIGGER_TEXTS.includes(t)) {
+    return { action: "show_menu" };
+  }
+  if (t in HELP_TOPIC_TEXTS) {
+    return { action: "show_help", topic: HELP_TOPIC_TEXTS[t] };
+  }
 
   // 誕生日登録：〇〇さんの誕生日は2026/5/1です
   let m = t.match(/^(.+?)さんの誕生日は(\d{4})\/(\d{1,2})\/(\d{1,2})です[。.！!]?$/);
