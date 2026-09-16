@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { webhook } from "@line/bot-sdk";
 import { verifyLineSignature, replyTextMessage, leaveGroup } from "@/lib/line";
-import { isAllowedUser, isAllowedGroup } from "@/lib/allowlist";
+import { isAllowedUser, isAllowedGroup, getAllowedGroups } from "@/lib/allowlist";
 import { parseCommand } from "@/lib/parseCommand";
-import { addCelebrant, removeCelebrant, setSpeechSpeakers, upsertBirthday } from "@/lib/sheets";
+import {
+  addCelebrant,
+  addCustomReminder,
+  removeCelebrant,
+  setSpeechSpeakers,
+  upsertBirthday,
+} from "@/lib/sheets";
 import { resolveName } from "@/lib/nameResolver";
 
 /**
@@ -98,10 +104,31 @@ async function handleUserMessage(userId: string | undefined, replyToken: string,
         `${personName}さんが誕生日リストに見つかりませんでした（名簿には存在しますが、この回の誕生日リストには載っていないようです）。`
       );
     }
+  } else if (command.action === "create_reminder") {
+    // グループラベルの検証（存在しない・省略時はデフォルトが使われる旨を案内）
+    const groups = getAllowedGroups();
+    const labelValid =
+      !command.groupLabel || groups.some((g) => g.label === command.groupLabel);
+
+    await addCustomReminder(
+      command.reminderType,
+      command.dateOrWeekday,
+      command.message,
+      command.groupLabel ?? (groups[0]?.label ?? "")
+    );
+
+    const typeLabel = command.reminderType === "one_time" ? `${command.dateOrWeekday}に1回限り` : `毎週${command.dateOrWeekday}曜日に`;
+    const groupNote = labelValid
+      ? ""
+      : `（「${command.groupLabel}」というグループが見つからなかったため、デフォルトの送信先にしました）`;
+    await replyTextMessage(
+      replyToken,
+      `リマインドを登録しました！${typeLabel}「${command.message}」を送ります。${groupNote}`
+    );
   } else {
     await replyTextMessage(
       replyToken,
-      "うまく読み取れませんでした。「〇〇さんの誕生日は2026/5/1です」「5/25の100スピ担当を〇〇に変更してください」「〇〇さんの祝福者に△△を追加して」のように送ってください。"
+      "うまく読み取れませんでした。「〇〇さんの誕生日は2026/5/1です」「5/25の100スピ担当を〇〇に変更してください」「〇〇さんの祝福者に△△を追加して」「2026/12/25に「忘年会があります」とリマインドしてください」のように送ってください。"
     );
   }
 }

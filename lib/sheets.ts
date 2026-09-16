@@ -6,6 +6,8 @@ const SHEET_ID = process.env.GOOGLE_SHEET_ID ?? "";
 const SHEET_NAME_100SPEECH =
   process.env.SHEET_NAME_100SPEECH ?? "6期生＆7期生100スピ・birthdayローテ ";
 const SHEET_NAME_BIRTHDAY = process.env.SHEET_NAME_BIRTHDAY ?? "6期&7期birthday";
+// カスタムリマインド用のタブ。存在しなければ自動で作成する
+const SHEET_NAME_CUSTOM_REMINDERS = process.env.SHEET_NAME_CUSTOM_REMINDERS ?? "カスタムリマインド";
 
 function getAuth() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -290,4 +292,109 @@ export async function getUpcomingCelebrantGaps(
   }
 
   return gaps;
+}
+
+/**
+ * カスタムリマインド機能。
+ * 「カスタムリマインド」タブに、1行1リマインドとして保存する。
+ * 列構成：A=種類(one_time/recurring), B=日付(YYYY/MM/DD)または曜日(月〜日), C=メッセージ, D=送信先ラベル, E=送信済み(TRUE/FALSE、one_timeのみ使用)
+ * タブが存在しなければ自動的に作成する。
+ */
+
+const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
+
+export type CustomReminderType = "one_time" | "recurring";
+
+export type DueCustomReminder = {
+  rowNumber: number;
+  message: string;
+  groupLabel: string;
+  type: CustomReminderType;
+};
+
+async function ensureCustomReminderSheetExists(
+  sheets: Awaited<ReturnType<typeof getSheetsClient>>
+): Promise<void> {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  const exists = meta.data.sheets?.some(
+    (s) => s.properties?.title === SHEET_NAME_CUSTOM_REMINDERS
+  );
+  if (exists) return;
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SHEET_ID,
+    requestBody: {
+      requests: [{ addSheet: { properties: { title: SHEET_NAME_CUSTOM_REMINDERS } } }],
+    },
+  });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_CUSTOM_REMINDERS}'!A1:E1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [["種類", "日付(YYYY/MM/DD)または曜日", "メッセージ", "送信先ラベル", "送信済み"]],
+    },
+  });
+}
+
+function formatYmd(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}/${m}/${d}`;
+}
+
+/** 新しいカスタムリマインドを1件追加する */
+export async function addCustomReminder(
+  type: CustomReminderType,
+  dateOrWeekday: string,
+  message: string,
+  groupLabel: string
+): Promise<void> {
+  const sheets = await getSheetsClient();
+  await ensureCustomReminderSheetExists(sheets);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_CUSTOM_REMINDERS}'!A2:E200`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: [[type, dateOrWeekday, message, groupLabel, "FALSE"]] },
+  });
+}
+
+/** 今日送るべきカスタムリマインドを判定する（1回限り：日付一致かつ未送信／定期：曜日一致） */
+export async function getDueCustomReminders(today: Date): Promise<DueCustomReminder[]> {
+  const sheets = await getSheetsClient();
+  await ensureCustomReminderSheetExists(sheets);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_CUSTOM_REMINDERS}'!A2:E200`,
+  });
+  const rows = res.data.values ?? [];
+  const todayStr = formatYmd(today);
+  const todayWeekday = WEEKDAY_NAMES[today.getDay()];
+
+  const due: DueCustomReminder[] = [];
+  rows.forEach((row, i) => {
+    const [type, dateOrWeekday, message, groupLabel, sent] = row;
+    if (!type || !message) return;
+
+    if (type === "one_time" && dateOrWeekday === todayStr && sent !== "TRUE") {
+      due.push({ rowNumber: i + 2, message, groupLabel: groupLabel ?? "", type: "one_time" });
+    } else if (type === "recurring" && dateOrWeekday === todayWeekday) {
+      due.push({ rowNumber: i + 2, message, groupLabel: groupLabel ?? "", type: "recurring" });
+    }
+  });
+  return due;
+}
+
+/** 1回限りのカスタムリマインドを送信済みにする（二重送信防止） */
+export async function markCustomReminderSent(rowNumber: number): Promise<void> {
+  const sheets = await getSheetsClient();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_CUSTOM_REMINDERS}'!E${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["TRUE"]] },
+  });
 }

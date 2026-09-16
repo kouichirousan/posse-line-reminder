@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pushTextMessage } from "@/lib/line";
+import { resolveGroupId } from "@/lib/allowlist";
+import { getDueCustomReminders, markCustomReminderSent } from "@/lib/sheets";
 import {
   buildBirthdayMessage,
   buildCelebrantGapMessage,
@@ -54,7 +56,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const allResults = [...groupResults, ...celebrantResults];
+  // カスタムリマインド（1回限り・毎週）を判定し、指定された送信先グループへ送る
+  const dueCustomReminders = await getDueCustomReminders(today);
+  const customResults: PromiseSettledResult<void>[] = [];
+  for (const reminder of dueCustomReminders) {
+    const groupId = resolveGroupId(reminder.groupLabel);
+    if (!groupId) continue;
+    const settled = await Promise.allSettled([pushTextMessage(groupId, reminder.message)]);
+    customResults.push(...settled);
+    if (reminder.type === "one_time" && settled[0].status === "fulfilled") {
+      await markCustomReminderSent(reminder.rowNumber);
+    }
+  }
+
+  const allResults = [...groupResults, ...celebrantResults, ...customResults];
   const succeeded = allResults.filter((r) => r.status === "fulfilled").length;
   const failed = allResults.filter((r) => r.status === "rejected").length;
 
@@ -63,6 +78,7 @@ export async function POST(req: NextRequest) {
     date: today.toISOString().slice(0, 10),
     group: { total: groupMessages.length, messages: groupMessages },
     celebrantGaps: { total: celebrantGaps.length, gaps: celebrantGaps },
+    customReminders: { total: dueCustomReminders.length, reminders: dueCustomReminders },
     succeeded,
     failed,
   };
