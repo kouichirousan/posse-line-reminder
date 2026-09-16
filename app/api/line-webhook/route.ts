@@ -14,6 +14,7 @@ import { resolveName } from "@/lib/nameResolver";
 import type { HelpTopic } from "@/lib/parseCommand";
 import type { QuickReplyButton } from "@/lib/line";
 import { continueReminderWizardIfActive, startReminderWizard } from "@/lib/reminderWizard";
+import { handleRegistration, parseRegistrationCommand } from "@/lib/memberRegistration";
 
 const MENU_BUTTONS: QuickReplyButton[] = [
   { label: "100スピ", text: "100スピ" },
@@ -64,7 +65,21 @@ async function resolveOrReply(replyToken: string, inputName: string): Promise<st
 
 /** 1:1チャットのテキストメッセージ1件を処理する。エラーはこの関数の外側（呼び出し側）でまとめて捕捉する。 */
 async function handleUserMessage(userId: string | undefined, replyToken: string, text: string) {
-  if (!userId || !isAllowedUser(userId)) {
+  if (!userId) {
+    await replyTextMessage(replyToken, "すみません、この操作は許可されたメンバーのみ利用できます。");
+    return;
+  }
+
+  // 自己申告でのメンバー登録（名前↔userId）は、管理者以外の一般メンバーにも開放するため、
+  // 許可メンバー限定のゲートより先にチェックする（名簿にない名前は登録できないため、
+  // 名簿自体が実質的なアクセス制御になっている）
+  const registrationName = parseRegistrationCommand(text);
+  if (registrationName) {
+    await handleRegistration(userId, replyToken, registrationName);
+    return;
+  }
+
+  if (!isAllowedUser(userId)) {
     await replyTextMessage(replyToken, "すみません、この操作は許可されたメンバーのみ利用できます。");
     return;
   }

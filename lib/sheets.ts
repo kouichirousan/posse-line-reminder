@@ -10,6 +10,8 @@ const SHEET_NAME_BIRTHDAY = process.env.SHEET_NAME_BIRTHDAY ?? "6期&7期birthda
 const SHEET_NAME_CUSTOM_REMINDERS = process.env.SHEET_NAME_CUSTOM_REMINDERS ?? "カスタムリマインド";
 // リマインド作成ウィザード（質問形式）の進行状態を保持するタブ。存在しなければ自動で作成する
 const SHEET_NAME_WIZARD_STATE = process.env.SHEET_NAME_WIZARD_STATE ?? "会話状態";
+// 自己申告方式でのメンバー登録（名前↔LINE userId）を保持するタブ。存在しなければ自動で作成する
+const SHEET_NAME_MEMBERS = process.env.SHEET_NAME_MEMBERS ?? "メンバー登録";
 
 function getAuth() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -508,4 +510,81 @@ export async function clearWizardState(userId: string): Promise<void> {
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [["", "", ""]] },
   });
+}
+
+/**
+ * 自己申告方式のメンバー登録（機能：グループ内メンションの前提）。
+ * 1:1チャットで「〇〇として登録してください」と送ると、送信者のLINE userIdと
+ * 名簿上の正式名称を紐付けて保存する。将来、名前からuserIdを引いて個人メンションするために使う。
+ * 列構成：A=userId, B=名前, C=登録日時
+ */
+
+export type Member = { userId: string; name: string };
+
+async function ensureMemberSheetExists(
+  sheets: Awaited<ReturnType<typeof getSheetsClient>>
+): Promise<void> {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  const exists = meta.data.sheets?.some((s) => s.properties?.title === SHEET_NAME_MEMBERS);
+  if (exists) return;
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SHEET_ID,
+    requestBody: {
+      requests: [{ addSheet: { properties: { title: SHEET_NAME_MEMBERS } } }],
+    },
+  });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_MEMBERS}'!A1:C1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["userId", "名前", "登録日時"]] },
+  });
+}
+
+/** 登録済みメンバーの一覧を返す */
+export async function getAllMembers(): Promise<Member[]> {
+  const sheets = await getSheetsClient();
+  await ensureMemberSheetExists(sheets);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_MEMBERS}'!A2:C1000`,
+  });
+  const rows = res.data.values ?? [];
+  return rows
+    .filter((row) => row[0] && row[1])
+    .map((row) => ({ userId: row[0], name: row[1] }));
+}
+
+/** 指定userIdのメンバー登録を保存する（既存行があれば名前を上書き、なければ新規追加） */
+export async function upsertMember(userId: string, name: string): Promise<"registered" | "updated"> {
+  const sheets = await getSheetsClient();
+  await ensureMemberSheetExists(sheets);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_MEMBERS}'!A2:A1000`,
+  });
+  const rows = res.data.values ?? [];
+  const index = rows.findIndex((row) => row[0] === userId);
+  const values = [[userId, name, new Date().toISOString()]];
+
+  if (index !== -1) {
+    const rowNumber = index + 2;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `'${SHEET_NAME_MEMBERS}'!A${rowNumber}:C${rowNumber}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values },
+    });
+    return "updated";
+  }
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_MEMBERS}'!A2:C1000`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values },
+  });
+  return "registered";
 }
