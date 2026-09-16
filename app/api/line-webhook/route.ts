@@ -13,13 +13,19 @@ import {
 import { resolveName } from "@/lib/nameResolver";
 import type { HelpTopic } from "@/lib/parseCommand";
 import type { QuickReplyButton } from "@/lib/line";
+import { continueReminderWizardIfActive, startReminderWizard } from "@/lib/reminderWizard";
 
 const MENU_BUTTONS: QuickReplyButton[] = [
-  { label: "誕生日登録", text: "誕生日登録" },
-  { label: "100スピ変更", text: "100スピ変更" },
-  { label: "祝福者追加", text: "祝福者追加" },
-  { label: "祝福者削除", text: "祝福者削除" },
+  { label: "100スピ", text: "100スピ" },
+  { label: "誕生日", text: "誕生日" },
+  { label: "祝福者", text: "祝福者" },
   { label: "リマインド作成", text: "リマインド作成" },
+];
+
+const CELEBRANT_MENU_BUTTONS: QuickReplyButton[] = [
+  { label: "追加", text: "祝福者追加" },
+  { label: "削除", text: "祝福者削除" },
+  { label: "メニューに戻る", text: "メニュー" },
 ];
 
 const BACK_TO_MENU_BUTTON: QuickReplyButton[] = [{ label: "メニューに戻る", text: "メニュー" }];
@@ -30,11 +36,6 @@ const HELP_TEXTS: Record<HelpTopic, string> = {
     "100スピ担当変更の言い方はこちらです：\n「5/25の100スピ担当を〇〇に変更してください」\n（複数人なら「〇〇と△△に」）",
   add_celebrant: "祝福者追加の言い方はこちらです：\n「〇〇さんの祝福者に△△を追加してください」",
   remove_celebrant: "祝福者削除の言い方はこちらです：\n「〇〇さんの祝福者から△△を削除してください」",
-  create_reminder:
-    "リマインド作成の言い方はこちらです：\n" +
-    "・1回限り：「2026/12/25に『忘年会があります』とリマインドしてください」\n" +
-    "・毎週：「毎週金曜日に『週報を出してください』とリマインドしてください」\n" +
-    "・送信先グループを指定する場合：「熱中タームグループで2026/12/25に『〜』とリマインドしてください」",
 };
 
 /**
@@ -63,10 +64,15 @@ async function resolveOrReply(replyToken: string, inputName: string): Promise<st
 
 /** 1:1チャットのテキストメッセージ1件を処理する。エラーはこの関数の外側（呼び出し側）でまとめて捕捉する。 */
 async function handleUserMessage(userId: string | undefined, replyToken: string, text: string) {
-  if (!isAllowedUser(userId)) {
+  if (!userId || !isAllowedUser(userId)) {
     await replyTextMessage(replyToken, "すみません、この操作は許可されたメンバーのみ利用できます。");
     return;
   }
+
+  // リマインド作成ウィザードの途中なら、通常のコマンド解釈より先にそちらへ渡す
+  // （ウィザード中に入力される日付・内容などの自由文はparseCommandの対象外のため）
+  const handledByWizard = await continueReminderWizardIfActive(userId, text, replyToken);
+  if (handledByWizard) return;
 
   const command = await parseCommand(text);
 
@@ -156,6 +162,10 @@ async function handleUserMessage(userId: string | undefined, replyToken: string,
       "何をしますか？ボタンから選んでください。",
       MENU_BUTTONS
     );
+  } else if (command.action === "show_celebrant_menu") {
+    await replyTextMessage(replyToken, "祝福者の追加・削除どちらですか？", CELEBRANT_MENU_BUTTONS);
+  } else if (command.action === "start_reminder_wizard") {
+    await startReminderWizard(userId, replyToken);
   } else if (command.action === "show_help") {
     await replyTextMessage(replyToken, HELP_TEXTS[command.topic], BACK_TO_MENU_BUTTON);
   } else {

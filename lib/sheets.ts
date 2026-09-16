@@ -8,6 +8,8 @@ const SHEET_NAME_100SPEECH =
 const SHEET_NAME_BIRTHDAY = process.env.SHEET_NAME_BIRTHDAY ?? "6期&7期birthday";
 // カスタムリマインド用のタブ。存在しなければ自動で作成する
 const SHEET_NAME_CUSTOM_REMINDERS = process.env.SHEET_NAME_CUSTOM_REMINDERS ?? "カスタムリマインド";
+// リマインド作成ウィザード（質問形式）の進行状態を保持するタブ。存在しなければ自動で作成する
+const SHEET_NAME_WIZARD_STATE = process.env.SHEET_NAME_WIZARD_STATE ?? "会話状態";
 
 function getAuth() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -396,5 +398,114 @@ export async function markCustomReminderSent(rowNumber: number): Promise<void> {
     range: `'${SHEET_NAME_CUSTOM_REMINDERS}'!E${rowNumber}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [["TRUE"]] },
+  });
+}
+
+/**
+ * リマインド作成ウィザード（1メッセージずつ項目を質問して埋めていく対話形式）の進行状態。
+ * LINE Webhookはリクエストごとに独立している（会話の記憶を持たない）ため、
+ * 「このユーザーは今どの質問の途中か」をスプレッドシートに保存して次のメッセージで読み出す。
+ * 列構成：A=userId, B=ステップ名, C=途中まで埋めたデータ(JSON文字列), D=最終更新日時(ISO)
+ * ステップが空欄（B列が空）の行は「進行中のウィザードなし」を意味する。
+ */
+
+const WIZARD_STATE_TTL_MS = 30 * 60 * 1000; // 30分以上放置されたら期限切れとして扱う
+
+export type WizardState<T> = { rowNumber: number; step: string; data: T };
+
+async function ensureWizardStateSheetExists(
+  sheets: Awaited<ReturnType<typeof getSheetsClient>>
+): Promise<void> {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  const exists = meta.data.sheets?.some((s) => s.properties?.title === SHEET_NAME_WIZARD_STATE);
+  if (exists) return;
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SHEET_ID,
+    requestBody: {
+      requests: [{ addSheet: { properties: { title: SHEET_NAME_WIZARD_STATE } } }],
+    },
+  });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_WIZARD_STATE}'!A1:D1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["userId", "ステップ", "データ(JSON)", "最終更新日時"]] },
+  });
+}
+
+/** 指定ユーザーの進行中のウィザード状態を読む。期限切れ・未着手なら null */
+export async function getWizardState<T>(userId: string): Promise<WizardState<T> | null> {
+  const sheets = await getSheetsClient();
+  await ensureWizardStateSheetExists(sheets);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_WIZARD_STATE}'!A2:D1000`,
+  });
+  const rows = res.data.values ?? [];
+  const index = rows.findIndex((row) => row[0] === userId);
+  if (index === -1) return null;
+
+  const [, step, dataJson, updatedAt] = rows[index];
+  if (!step) return null;
+  if (updatedAt && Date.now() - new Date(updatedAt).getTime() > WIZARD_STATE_TTL_MS) return null;
+
+  try {
+    return { rowNumber: index + 2, step, data: dataJson ? JSON.parse(dataJson) : ({} as T) };
+  } catch {
+    return null;
+  }
+}
+
+/** 指定ユーザーのウィザード状態を保存する（既存行があれば上書き、なければ新規追加） */
+export async function setWizardState<T>(userId: string, step: string, data: T): Promise<void> {
+  const sheets = await getSheetsClient();
+  await ensureWizardStateSheetExists(sheets);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_WIZARD_STATE}'!A2:A1000`,
+  });
+  const rows = res.data.values ?? [];
+  const index = rows.findIndex((row) => row[0] === userId);
+  const values = [[userId, step, JSON.stringify(data), new Date().toISOString()]];
+
+  if (index !== -1) {
+    const rowNumber = index + 2;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `'${SHEET_NAME_WIZARD_STATE}'!A${rowNumber}:D${rowNumber}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values },
+    });
+    return;
+  }
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_WIZARD_STATE}'!A2:D1000`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values },
+  });
+}
+
+/** 指定ユーザーのウィザード状態を消す（キャンセル・完了時）。行自体は使い回すため中身だけ空にする */
+export async function clearWizardState(userId: string): Promise<void> {
+  const sheets = await getSheetsClient();
+  await ensureWizardStateSheetExists(sheets);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_WIZARD_STATE}'!A2:A1000`,
+  });
+  const rows = res.data.values ?? [];
+  const index = rows.findIndex((row) => row[0] === userId);
+  if (index === -1) return;
+
+  const rowNumber = index + 2;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_WIZARD_STATE}'!B${rowNumber}:D${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["", "", ""]] },
   });
 }

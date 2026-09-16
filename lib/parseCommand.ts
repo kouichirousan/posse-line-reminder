@@ -3,12 +3,7 @@ import { parseCommandByRules } from "./parseCommandRules";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-export type HelpTopic =
-  | "set_birthday"
-  | "set_speech_speaker"
-  | "add_celebrant"
-  | "remove_celebrant"
-  | "create_reminder";
+export type HelpTopic = "set_birthday" | "set_speech_speaker" | "add_celebrant" | "remove_celebrant";
 
 export type ParsedCommand =
   | { action: "set_birthday"; name: string; date: string } // dateはYYYY/MM/DD
@@ -23,6 +18,8 @@ export type ParsedCommand =
       groupLabel?: string;
     }
   | { action: "show_menu" }
+  | { action: "show_celebrant_menu" }
+  | { action: "start_reminder_wizard" }
   | { action: "show_help"; topic: HelpTopic }
   | { action: "unknown" };
 

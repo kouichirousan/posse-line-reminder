@@ -1,14 +1,18 @@
 import type { HelpTopic, ParsedCommand } from "./parseCommand";
 
 // メニューのボタンをタップすると、この固定文言がユーザーメッセージとして送信される
-// （LINEのQuick Reply=MessageActionの仕様。ボタン→カテゴリ選択→案内表示、という2段階UI）
+// （LINEのQuick Reply=MessageActionの仕様）。
+// 構成：①メニュー→「100スピ／誕生日／祝福者／リマインド作成」の4択
+//      ②100スピ・誕生日はそのまま言い方を案内、祝福者は「追加／削除」のサブメニューへ
+//      ③リマインド作成だけは案内で終わらず、質問形式のウィザードを開始する（start_reminder_wizard）
 const MENU_TRIGGER_TEXTS = ["メニュー", "ヘルプ", "使い方", "使い方メニュー"];
+const CELEBRANT_MENU_TRIGGER_TEXT = "祝福者";
+const REMINDER_WIZARD_TRIGGER_TEXT = "リマインド作成";
 const HELP_TOPIC_TEXTS: Record<string, HelpTopic> = {
-  誕生日登録: "set_birthday",
-  "100スピ変更": "set_speech_speaker",
+  "100スピ": "set_speech_speaker",
+  誕生日: "set_birthday",
   祝福者追加: "add_celebrant",
   祝福者削除: "remove_celebrant",
-  リマインド作成: "create_reminder",
 };
 
 /**
@@ -26,14 +30,24 @@ const HELP_TOPIC_TEXTS: Record<string, HelpTopic> = {
  * ・定期リマインド：「毎週金曜日に『週報を出してください』とリマインドしてください」
  *
  * 「メニュー」「ヘルプ」等を送るとQuick Replyのボタン式メニューを表示する（show_menu）。
- * ボタンをタップすると上記5カテゴリ名（誕生日登録／100スピ変更／祝福者追加／祝福者削除／リマインド作成）
- * が送信され、該当する言い回しの案内を返す（show_help）。
+ * トップメニューは「100スピ／誕生日／祝福者／リマインド作成」の4択。
+ * 「100スピ」「誕生日」は該当する言い回しをそのまま案内（show_help）。
+ * 「祝福者」はさらに「祝福者追加／祝福者削除」のサブメニューを挟む（show_celebrant_menu）。
+ * 「リマインド作成」だけは案内で終わらせず、1項目ずつ質問して埋めていくウィザードを開始する
+ * （start_reminder_wizard。上記の単発／定期リマインドのテンプレート文言は、
+ * ウィザードを使わず直接1文で送りたい人向けに引き続き有効）。
  */
 export function parseCommandByRules(text: string): ParsedCommand | null {
   const t = text.trim();
 
   if (MENU_TRIGGER_TEXTS.includes(t)) {
     return { action: "show_menu" };
+  }
+  if (t === CELEBRANT_MENU_TRIGGER_TEXT) {
+    return { action: "show_celebrant_menu" };
+  }
+  if (t === REMINDER_WIZARD_TRIGGER_TEXT) {
+    return { action: "start_reminder_wizard" };
   }
   if (t in HELP_TOPIC_TEXTS) {
     return { action: "show_help", topic: HELP_TOPIC_TEXTS[t] };
