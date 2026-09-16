@@ -214,8 +214,7 @@ export async function POST(req: NextRequest) {
 
       await handleUserMessage(event.source.userId, replyToken, event.message.text);
     } catch (err) {
-      // Anthropic APIのエラーやSheets APIの一時的な失敗などで処理が落ちても、
-      // 無言で終わらせずに本人へフォールバック返信する
+      // Sheets APIの一時的な失敗などで処理が落ちても、無言で終わらせずに本人へフォールバック返信する
       console.error("Error handling LINE event:", JSON.stringify({ event, error: String(err) }));
       if (event.type === "message" && event.replyToken) {
         try {
