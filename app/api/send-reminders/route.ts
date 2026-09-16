@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pushTextMessage } from "@/lib/line";
+import { pushTextMessage, pushGroupMessageWithAllMention } from "@/lib/line";
 import { resolveGroupId } from "@/lib/allowlist";
 import { getDueCustomReminders, markCustomReminderSent } from "@/lib/sheets";
 import {
@@ -41,8 +41,9 @@ export async function POST(req: NextRequest) {
   ];
 
   // 1件の送信失敗が他のリマインドを巻き込まないよう、それぞれ独立して結果を記録する
+  // グループ宛てなので@全員メンション付きで送る（気づいてもらえないと意味がないため）
   const groupResults = await Promise.allSettled(
-    groupMessages.map((message) => pushTextMessage(targetId, message))
+    groupMessages.map((message) => pushGroupMessageWithAllMention(targetId, message))
   );
 
   // 祝福者未定チェック（月曜のみ）。グループではなくカルチャー局（許可ユーザー）個別に送る
@@ -62,7 +63,9 @@ export async function POST(req: NextRequest) {
   for (const reminder of dueCustomReminders) {
     const groupId = resolveGroupId(reminder.groupLabel);
     if (!groupId) continue;
-    const settled = await Promise.allSettled([pushTextMessage(groupId, reminder.message)]);
+    const settled = await Promise.allSettled([
+      pushGroupMessageWithAllMention(groupId, reminder.message),
+    ]);
     customResults.push(...settled);
     if (reminder.type === "one_time" && settled[0].status === "fulfilled") {
       await markCustomReminderSent(reminder.rowNumber);

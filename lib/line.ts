@@ -25,6 +25,37 @@ export async function pushTextMessage(to: string, text: string) {
   }
 }
 
+/**
+ * グループ宛てに「@全員」メンション付きでテキストを送る。
+ * LINEのtextV2形式（{プレースホルダー}＋substitution）を使う。type:"all"のメンションは
+ * 個人のuserIdを必要としない（個人メンションと違い、名簿とのuserId紐付けが不要）。
+ * 1:1チャット（グループでない宛先）には送らないこと（@全員の意味が成立しない）。
+ */
+export async function pushGroupMessageWithAllMention(to: string, text: string) {
+  const fullText = `{everyone} ${text}`;
+  try {
+    const res = await lineClient.pushMessage({
+      to,
+      messages: [
+        {
+          type: "textV2",
+          text: fullText,
+          substitution: {
+            everyone: { type: "mention", mentionee: { type: "all" } },
+          },
+        },
+      ],
+    });
+    console.log("LINE push (all mention) success:", JSON.stringify({ to, text, res }));
+  } catch (err) {
+    console.error(
+      "LINE push (all mention) failed:",
+      JSON.stringify({ to, text, error: String(err) })
+    );
+    throw err;
+  }
+}
+
 export type QuickReplyButton = { label: string; text: string };
 
 export async function replyTextMessage(
