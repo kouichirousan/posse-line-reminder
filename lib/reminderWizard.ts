@@ -17,8 +17,9 @@ import {
  * ステップ遷移：
  * await_type（1回限り／毎週）
  *   → one_time なら await_deadline（イベント・締切の日付＝YYYY/MM/DD）
+ *     → await_title（タイトルを自由入力）→ await_body（詳細、任意。「なし」でスキップ可）
  *   → recurring なら await_weekday（月〜日のボタン）
- * → await_message（内容を自由入力）
+ *     → await_message（内容を自由入力）
  * → await_group（送信先グループをボタンから選択、または「デフォルトでOK」）
  * → 完了：
  *   - one_time：締切から逆算して複数件（エビングハウス方式）のカスタムリマインドを一括登録
@@ -31,10 +32,13 @@ import {
 type WizardData = {
   reminderType?: CustomReminderType;
   dateOrWeekday?: string; // one_time: 締切日(YYYY/MM/DD)、recurring: 曜日
-  message?: string;
+  message?: string; // recurring用（内容をそのまま1本のメッセージにする）
+  title?: string; // one_time（イベント逆算）用：タイトル
+  body?: string; // one_time用：詳細本文（任意、空文字なら本文なし）
 };
 
 const CANCEL_BUTTON: QuickReplyButton = { label: "キャンセル", text: "キャンセル" };
+const SKIP_BODY_BUTTON: QuickReplyButton = { label: "なし", text: "なし" };
 const WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"];
 
 // 「締切のN日前」に送るリマインドのオフセット一覧（エビングハウスの忘却曲線を参考にした間隔拡大方式）。
@@ -72,9 +76,9 @@ function buildEventReminderSchedule(
   })).filter((entry) => entry.date >= today);
 }
 
-function buildEventReminderMessage(content: string, offsetDays: number): string {
-  if (offsetDays === 0) return `【${content}】本日が期限です！`;
-  return `【${content}】まであと${offsetDays}日です`;
+function buildEventReminderMessage(title: string, body: string, offsetDays: number): string {
+  const headline = offsetDays === 0 ? `【${title}】本日が期限です！` : `【${title}】まであと${offsetDays}日です`;
+  return body ? `${headline}\n${body}` : headline;
 }
 
 /** メニューの「リマインド作成」ボタンから呼ばれる、ウィザードの開始地点 */
@@ -140,12 +144,39 @@ export async function continueReminderWizardIfActive(
       await replyTextMessage(replyToken, "締切は今日以降の日付にしてください。", [CANCEL_BUTTON]);
       return true;
     }
-    await setWizardState<WizardData>(userId, "await_message", { ...data, dateOrWeekday: formatYmd(deadline) });
+    await setWizardState<WizardData>(userId, "await_title", { ...data, dateOrWeekday: formatYmd(deadline) });
     await replyTextMessage(
       replyToken,
-      "そのイベント・締切の内容を教えてください（例：卒論提出、期末レポート提出など）",
+      "イベント・締切のタイトルを教えてください（例：卒論提出、期末レポート提出）",
       [CANCEL_BUTTON]
     );
+    return true;
+  }
+
+  if (step === "await_title") {
+    if (!t) {
+      await replyTextMessage(replyToken, "タイトルを入力してください。", [CANCEL_BUTTON]);
+      return true;
+    }
+    await setWizardState<WizardData>(userId, "await_body", { ...data, title: t });
+    await replyTextMessage(
+      replyToken,
+      "詳細があれば教えてください（例：教授に提出、PDF形式で提出）。なければ「なし」を選んでください。",
+      [SKIP_BODY_BUTTON, CANCEL_BUTTON]
+    );
+    return true;
+  }
+
+  if (step === "await_body") {
+    const body = t === "なし" ? "" : t;
+    await setWizardState<WizardData>(userId, "await_group", { ...data, body });
+    const groups = getAllowedGroups();
+    const groupButtons: QuickReplyButton[] = [
+      ...groups.map((g) => ({ label: g.label, text: g.label })),
+      { label: "デフォルトでOK", text: "デフォルトでOK" },
+      CANCEL_BUTTON,
+    ];
+    await replyTextMessage(replyToken, "送信先グループを選んでください。", groupButtons);
     return true;
   }
 
@@ -200,7 +231,7 @@ export async function continueReminderWizardIfActive(
         await addCustomReminder(
           "one_time",
           formatYmd(entry.date),
-          buildEventReminderMessage(data.message!, entry.offsetDays),
+          buildEventReminderMessage(data.title!, data.body ?? "", entry.offsetDays),
           groupLabel
         );
       }
@@ -211,7 +242,7 @@ export async function continueReminderWizardIfActive(
         .join("\n");
       await replyTextMessage(
         replyToken,
-        `「${data.message}」（締切：${data.dateOrWeekday}）のリマインドを${schedule.length}件登録しました！\n${scheduleLines}`
+        `「${data.title}」（締切：${data.dateOrWeekday}）のリマインドを${schedule.length}件登録しました！\n${scheduleLines}`
       );
     } else {
       await addCustomReminder("recurring", data.dateOrWeekday!, data.message!, groupLabel);
