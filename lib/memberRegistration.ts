@@ -2,6 +2,15 @@ import { replyTextMessage } from "./line";
 import { resolveName } from "./nameResolver";
 import { getAllMembers, upsertMember } from "./sheets";
 
+export const REGISTRATION_PROMPT_MESSAGE =
+  "まずお名前を登録してください。「〇〇として登録してください」の形で、名簿に載っているお名前を送ってください。";
+
+/** 指定userIdが「メンバー登録」シートに登録済みかどうか */
+export async function isMemberRegistered(userId: string): Promise<boolean> {
+  const members = await getAllMembers();
+  return members.some((m) => m.userId === userId);
+}
+
 /**
  * 自己申告方式のメンバー登録（グループ内メンション機能の前提）。
  * 「〇〇として登録してください」という決まった言い回しは、管理者かどうかに関わらず

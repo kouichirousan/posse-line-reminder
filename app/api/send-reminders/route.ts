@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pushTextMessage, pushGroupMessageWithAllMention } from "@/lib/line";
-import { resolveGroupId } from "@/lib/allowlist";
+import { getNotificationRecipientUserIds, resolveGroupId } from "@/lib/allowlist";
 import { getDueCustomReminders, markCustomReminderSent } from "@/lib/sheets";
 import {
   buildBirthdayMessage,
@@ -11,13 +11,6 @@ import {
   getSpeechRemindersForToday,
   getTodayJST,
 } from "@/lib/reminders";
-
-function getAllowedUserIds(): string[] {
-  return (process.env.ALLOWED_LINE_USER_IDS ?? "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
-}
 
 /** GitHub Actionsから定時に叩かれるエンドポイント。共有シークレットで認証する。 */
 export async function POST(req: NextRequest) {
@@ -51,9 +44,9 @@ export async function POST(req: NextRequest) {
   let celebrantResults: PromiseSettledResult<void>[] = [];
   if (celebrantGaps.length > 0) {
     const message = buildCelebrantGapMessage(celebrantGaps);
-    const allowedUserIds = getAllowedUserIds();
+    const recipientUserIds = await getNotificationRecipientUserIds();
     celebrantResults = await Promise.allSettled(
-      allowedUserIds.map((userId) => pushTextMessage(userId, message))
+      recipientUserIds.map((userId) => pushTextMessage(userId, message))
     );
   }
 

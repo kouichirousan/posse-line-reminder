@@ -12,6 +12,8 @@ const SHEET_NAME_CUSTOM_REMINDERS = process.env.SHEET_NAME_CUSTOM_REMINDERS ?? "
 const SHEET_NAME_WIZARD_STATE = process.env.SHEET_NAME_WIZARD_STATE ?? "会話状態";
 // 自己申告方式でのメンバー登録（名前↔LINE userId）を保持するタブ。存在しなければ自動で作成する
 const SHEET_NAME_MEMBERS = process.env.SHEET_NAME_MEMBERS ?? "メンバー登録";
+// 管理者（admin）の一覧を保持するタブ。存在しなければ自動で作成する（masterがチャットから加除する）
+const SHEET_NAME_ADMINS = process.env.SHEET_NAME_ADMINS ?? "管理者";
 
 function getAuth() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -587,4 +589,113 @@ export async function upsertMember(userId: string, name: string): Promise<"regis
     requestBody: { values },
   });
   return "registered";
+}
+
+/**
+ * 管理者（admin）の動的管理。
+ * ロールはmaster（本多晃一朗、MASTER_LINE_USER_IDで固定指定）／admin（masterがチャットから加除）／
+ * 一般の3階層。以前はADMINは.envのALLOWED_LINE_USER_IDSで静的管理していたが、masterがチャット越しに
+ * 加除できるよう、このシートタブでの動的管理に切り替えた（2026-09-25）。
+ * タブを初めて作成するときだけ、旧ALLOWED_LINE_USER_IDSの内容を初期値としてそのまま引き継ぐ
+ * （既存の管理者が移行で権限を失わないようにするため）。
+ * 列構成：A=userId, B=名前（任意、空でも可）, C=追加日時
+ */
+
+export type Admin = { userId: string; name: string };
+
+async function ensureAdminSheetExists(
+  sheets: Awaited<ReturnType<typeof getSheetsClient>>
+): Promise<void> {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  const exists = meta.data.sheets?.some((s) => s.properties?.title === SHEET_NAME_ADMINS);
+  if (exists) return;
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SHEET_ID,
+    requestBody: {
+      requests: [{ addSheet: { properties: { title: SHEET_NAME_ADMINS } } }],
+    },
+  });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_ADMINS}'!A1:C1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["userId", "名前", "追加日時"]] },
+  });
+
+  // 旧ALLOWED_LINE_USER_IDS（.env）に入っていたIDを、移行時の初期値としてそのまま引き継ぐ
+  const legacyIds = (process.env.ALLOWED_LINE_USER_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (legacyIds.length > 0) {
+    const now = new Date().toISOString();
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID,
+      range: `'${SHEET_NAME_ADMINS}'!A2:C1000`,
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: legacyIds.map((id) => [id, "（移行時の初期値・名前未設定）", now]) },
+    });
+  }
+}
+
+/** 管理者の一覧を返す */
+export async function getAllAdmins(): Promise<Admin[]> {
+  const sheets = await getSheetsClient();
+  await ensureAdminSheetExists(sheets);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_ADMINS}'!A2:C1000`,
+  });
+  const rows = res.data.values ?? [];
+  return rows.filter((row) => row[0]).map((row) => ({ userId: row[0], name: row[1] ?? "" }));
+}
+
+/** 管理者を追加する（既に管理者なら"already_admin"を返す） */
+export async function addAdmin(userId: string, name: string): Promise<"added" | "already_admin"> {
+  const sheets = await getSheetsClient();
+  await ensureAdminSheetExists(sheets);
+  const admins = await getAllAdmins();
+  if (admins.some((a) => a.userId === userId)) return "already_admin";
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_ADMINS}'!A2:C1000`,
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: { values: [[userId, name, new Date().toISOString()]] },
+  });
+  return "added";
+}
+
+/** 管理者を削除する（管理者でなければ"not_admin"を返す） */
+export async function removeAdmin(userId: string): Promise<"removed" | "not_admin"> {
+  const sheets = await getSheetsClient();
+  await ensureAdminSheetExists(sheets);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_ADMINS}'!A2:A1000`,
+  });
+  const rows = res.data.values ?? [];
+  const index = rows.findIndex((row) => row[0] === userId);
+  if (index === -1) return "not_admin";
+
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  const sheetId = meta.data.sheets?.find((s) => s.properties?.title === SHEET_NAME_ADMINS)?.properties
+    ?.sheetId;
+  const rowNumber = index + 2; // A2始まりなのでオフセット+2（0始まりのシート行インデックスは rowNumber-1）
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SHEET_ID,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: { sheetId, dimension: "ROWS", startIndex: rowNumber - 1, endIndex: rowNumber },
+          },
+        },
+      ],
+    },
+  });
+  return "removed";
 }

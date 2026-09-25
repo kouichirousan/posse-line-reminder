@@ -1,11 +1,39 @@
-/** 1:1チャットでの設定変更を許可するLINEユーザーID（カルチャー局メンバー）。カンマ区切りで.envに設定する */
-export function isAllowedUser(lineUserId: string | undefined | null): boolean {
+import { getAllAdmins } from "./sheets";
+
+/**
+ * ロールは master（本多晃一朗、MASTER_LINE_USER_IDで固定指定の1人のみ）／
+ * admin（masterがチャットから加除する。実体は「管理者」シートタブ）／一般 の3階層。
+ * masterはadminの操作をすべて行える（admin以上として扱う）。
+ */
+
+/** masterかどうか（.envのMASTER_LINE_USER_IDと一致するか） */
+export function isMaster(lineUserId: string | undefined | null): boolean {
   if (!lineUserId) return false;
-  const allowed = (process.env.ALLOWED_LINE_USER_IDS ?? "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
-  return allowed.includes(lineUserId);
+  const masterId = process.env.MASTER_LINE_USER_ID;
+  return !!masterId && lineUserId === masterId;
+}
+
+/** admin（管理者シートタブに登録されているか）かどうか。masterは含まない */
+export async function isAdmin(lineUserId: string | undefined | null): Promise<boolean> {
+  if (!lineUserId) return false;
+  const admins = await getAllAdmins();
+  return admins.some((a) => a.userId === lineUserId);
+}
+
+/** master または admin かどうか（1:1チャットでの既存の管理者向け機能はこれで判定する） */
+export async function isAdminOrMaster(lineUserId: string | undefined | null): Promise<boolean> {
+  if (!lineUserId) return false;
+  if (isMaster(lineUserId)) return true;
+  return isAdmin(lineUserId);
+}
+
+/** 通知（祝福者未定アラート等）を送るべき相手のuserId一覧。master＋管理者全員 */
+export async function getNotificationRecipientUserIds(): Promise<string[]> {
+  const admins = await getAllAdmins();
+  const ids = admins.map((a) => a.userId);
+  const masterId = process.env.MASTER_LINE_USER_ID;
+  if (masterId) ids.push(masterId);
+  return [...new Set(ids)];
 }
 
 export type AllowedGroup = { label: string; groupId: string };

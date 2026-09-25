@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { webhook } from "@line/bot-sdk";
 import { verifyLineSignature, replyTextMessage, leaveGroup } from "@/lib/line";
-import { isAllowedUser, isAllowedGroup, getAllowedGroups } from "@/lib/allowlist";
+import { isAdminOrMaster, isMaster, isAllowedGroup, getAllowedGroups } from "@/lib/allowlist";
 import { parseCommand } from "@/lib/parseCommand";
 import {
   addCelebrant,
@@ -14,7 +14,13 @@ import { resolveName } from "@/lib/nameResolver";
 import type { HelpTopic } from "@/lib/parseCommand";
 import type { QuickReplyButton } from "@/lib/line";
 import { continueReminderWizardIfActive, startReminderWizard } from "@/lib/reminderWizard";
-import { handleRegistration, parseRegistrationCommand } from "@/lib/memberRegistration";
+import {
+  handleRegistration,
+  isMemberRegistered,
+  parseRegistrationCommand,
+  REGISTRATION_PROMPT_MESSAGE,
+} from "@/lib/memberRegistration";
+import { handleAdminCommand, parseAdminCommand } from "@/lib/adminManagement";
 
 const MENU_BUTTONS: QuickReplyButton[] = [
   { label: "100スピ", text: "100スピ" },
@@ -79,7 +85,25 @@ async function handleUserMessage(userId: string | undefined, replyToken: string,
     return;
   }
 
-  if (!isAllowedUser(userId)) {
+  // 管理者の加除はmaster限定。master以外が送った場合もここで明示的に拒否する
+  // （一般ゲートより先に判定するので、未登録の一般メンバーが送っても意図が伝わる）
+  const adminCommand = parseAdminCommand(text);
+  if (adminCommand) {
+    if (!isMaster(userId)) {
+      await replyTextMessage(replyToken, "すみません、管理者の追加・削除はmasterのみ行えます。");
+      return;
+    }
+    await handleAdminCommand(replyToken, adminCommand);
+    return;
+  }
+
+  if (!(await isAdminOrMaster(userId))) {
+    // admin/master以外の場合、名前登録が済んでいなければ他の全操作より先に登録を必須化する
+    // （master/adminはロール判定が別なので、この必須化の対象外＝影響を受けない）
+    if (!(await isMemberRegistered(userId))) {
+      await replyTextMessage(replyToken, REGISTRATION_PROMPT_MESSAGE);
+      return;
+    }
     await replyTextMessage(replyToken, "すみません、この操作は許可されたメンバーのみ利用できます。");
     return;
   }
@@ -207,6 +231,15 @@ export async function POST(req: NextRequest) {
     console.log("LINE event:", JSON.stringify(event));
 
     try {
+      // 友だち追加（1:1でbotを初めて追加）されたら、名前登録を案内する（名前登録の必須化とセット）
+      if (event.type === "follow" && event.source?.type === "user") {
+        await replyTextMessage(
+          event.replyToken,
+          `リマインド局長を追加いただきありがとうございます！\n${REGISTRATION_PROMPT_MESSAGE}`
+        );
+        continue;
+      }
+
       // 機能6：許可していないグループに追加された場合は自動的に退出する
       if (event.type === "join" && event.source?.type === "group") {
         const groupId = event.source.groupId;
