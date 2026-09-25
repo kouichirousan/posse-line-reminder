@@ -301,6 +301,44 @@ export async function getUpcomingCelebrantGaps(
 }
 
 /**
+ * MUで既に発表済み（=I列に載っているMU回の日付が今日以前）の誕生日一覧を、
+ * 「名前|M/D」のキー集合で返す。
+ * 誕生日リマインド（lib/reminders.ts）はこれまで誕生日名簿の日付だけを見て
+ * 機械的にリマインドしていたため、MUで発表し終わった後にも古い1日前リマインドが
+ * 届いてしまう問題があった。I列（実際にどのMU回でその人の誕生日を発表したか）を
+ * 参照し、そのMU回の日付が今日以前ならリマインド対象から除外することで解消する。
+ */
+export async function getAnnouncedBirthdayKeys(today: Date): Promise<Set<string>> {
+  const sheets = await getSheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `'${SHEET_NAME_100SPEECH}'!A3:J200`,
+  });
+  const rows = res.data.values ?? [];
+  const announced = new Set<string>();
+
+  for (const row of rows) {
+    const rowDateMatch = (row[1] ?? "").match(/^(\d{1,2})\/(\d{1,2})$/);
+    if (!rowDateMatch) continue;
+    const rowDate = new Date(today.getFullYear(), Number(rowDateMatch[1]) - 1, Number(rowDateMatch[2]));
+    if (rowDate > today) continue; // まだ来ていないMU回は「発表済み」に含めない
+
+    const bdRaw = row[8] ?? "";
+    if (!bdRaw) continue;
+    bdRaw
+      .split("\n")
+      .map((s: string) => s.trim())
+      .filter(Boolean)
+      .forEach((entry: string) => {
+        const parsed = parseBirthdayEntry(entry);
+        if (parsed) announced.add(`${parsed.name}|${parsed.date}`);
+      });
+  }
+
+  return announced;
+}
+
+/**
  * カスタムリマインド機能。
  * 「カスタムリマインド」タブに、1行1リマインドとして保存する。
  * 列構成：A=種類(one_time/recurring), B=日付(YYYY/MM/DD)または曜日(月〜日), C=メッセージ, D=送信先ラベル, E=送信済み(TRUE/FALSE、one_timeのみ使用)

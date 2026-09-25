@@ -1,4 +1,10 @@
-import { getBirthdayRoster, getSpeechRoster, getUpcomingCelebrantGaps, type CelebrantGap } from "./sheets";
+import {
+  getAnnouncedBirthdayKeys,
+  getBirthdayRoster,
+  getSpeechRoster,
+  getUpcomingCelebrantGaps,
+  type CelebrantGap,
+} from "./sheets";
 
 /** サーバーのタイムゾーンに関わらず、日本時間での「今日」を返す */
 export function getTodayJST(): Date {
@@ -65,6 +71,8 @@ export async function getSpeechRemindersForToday(today: Date): Promise<SpeechRem
  * 今日送るべき誕生日リマインドを判定する。
  * N日前（デフォルト7日、BIRTHDAY_ADVANCE_DAYSで変更可）：早めの通知
  * 1日前：直前通知
+ * ただし、100スピシートのI列（実際にどのMU回でその人の誕生日を発表したか）を見て、
+ * 既にMUで発表済みの人はリマインド対象から除外する（発表後に古いリマインドが届く問題の対策）。
  */
 export async function getBirthdayRemindersForToday(today: Date): Promise<BirthdayReminder[]> {
   const advanceDays = Number(process.env.BIRTHDAY_ADVANCE_DAYS ?? "7");
@@ -72,11 +80,13 @@ export async function getBirthdayRemindersForToday(today: Date): Promise<Birthda
   const dayBeforeTarget = addDays(today, 1);
 
   const roster = await getBirthdayRoster();
+  const announced = await getAnnouncedBirthdayKeys(today);
   const reminders: BirthdayReminder[] = [];
 
   for (const row of roster) {
     const md = parseYmdMonthDay(row.date);
     if (!md) continue;
+    if (announced.has(`${row.name}|${md.month}/${md.day}`)) continue;
     if (sameMonthDay(md, advanceTarget)) {
       reminders.push({ kind: "birthday", targetDate: advanceTarget, name: row.name });
     }
